@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!--
+      Fonts used to be pulled in with an @import inside index.css, which forces the
+      browser to download and parse the CSS bundle before it even discovers them.
+      Linking here lets the request start immediately, in parallel.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Michroma&display=swap"
+    />
+    <!-- Both scrub videos stream from here; warm the connection during startup. -->
+    <link rel="preconnect" href="https://pub-86dc5b5484314368ac5436a674b0d919.r2.dev" crossorigin />
+
     <title>Kartik — BCA Student · AI Automation & Full-Stack Developer</title>
     <meta name="description" content="Portfolio of Kartik — BCA student with hands-on experience in AI automation and full-stack web development. AI-powered tools, automated outreach, and full-stack platforms." />
   </head>

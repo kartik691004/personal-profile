@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Michroma&display=swap');
+/* Fonts are linked from index.html so the request isn't serialised behind this file. */
 @import "tailwindcss";
 
 @theme {
@@ -52,4 +52,11 @@ body {
   flex-wrap: nowrap;
   animation: marquee-scroll linear infinite;
   will-change: transform;
+}
+
+/* The marquee is decorative; don't animate it for users who opt out. */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
 }

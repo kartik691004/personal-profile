@@ -1,54 +1,52 @@
-import { useEffect, useRef, useState } from 'react'
-import gsap from 'gsap'
-
-interface VideoScrubberProps {
-  scrollProgress: number
-}
+import { memo, useEffect, useRef, useState } from 'react'
+import { clamp01, getPointerX, getPointerY, HERO_COVERED_AT, onFrame } from '../scroll'
 
 const VIDEO_URL =
   'https://pub-86dc5b5484314368ac5436a674b0d919.r2.dev/cloudinarry%20to%20cloudflare/202606021731-e_hqa6sn.mp4'
 const FALLBACK_DURATION = 4.2
+const SEEK_LERP = 0.22
+/** Don't ask the decoder to seek for sub-frame deltas — it's the expensive part. */
+const SEEK_EPSILON = 0.02
+const PARALLAX = 40
 
-export default function VideoScrubber({ scrollProgress }: VideoScrubberProps) {
+function VideoScrubber() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [isLoaded, setIsLoaded] = useState(false)
-  const currentRef = useRef(0)
 
   useEffect(() => {
     const video = videoRef.current
     const wrap = wrapRef.current
     if (!video || !wrap) return
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const mx = e.clientX / window.innerWidth - 0.5
-      const my = e.clientY / window.innerHeight - 0.5
-      gsap.to(wrap, { x: -mx * 40, y: -my * 40, duration: 1.2, ease: 'power2.out', overwrite: 'auto' })
-    }
-    window.addEventListener('mousemove', handleMouseMove)
+    let current = 0
+    let lastTransform = ''
 
-    const duration = video.duration || FALLBACK_DURATION
+    // Subscribed once, for the lifetime of the component. The previous version
+    // listed scrollProgress as a dependency, so this whole effect — including the
+    // rAF loop and a window listener — was torn down and rebuilt on every frame.
+    return onFrame((progress) => {
+      // Fully covered by the dark panel: no point seeking or moving anything.
+      if (progress >= HERO_COVERED_AT) return false
 
-    const tick = () => {
-      const targetTime = Math.min(1, Math.max(0, scrollProgress)) * duration
-      currentRef.current += (targetTime - currentRef.current) * 0.15
-      if (!video.seeking && Math.abs(video.currentTime - currentRef.current) > 0.01) {
-        video.currentTime = currentRef.current
+      const transform = `translate3d(${(-getPointerX() * PARALLAX).toFixed(2)}px, ${(-getPointerY() * PARALLAX).toFixed(2)}px, 0)`
+      if (transform !== lastTransform) {
+        wrap.style.transform = transform
+        lastTransform = transform
       }
-    }
 
-    let raf: number
-    const loop = () => {
-      tick()
-      raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
+      const duration = video.duration || FALLBACK_DURATION
+      const targetTime = clamp01(progress) * duration
+      const delta = targetTime - current
+      current += delta * SEEK_LERP
 
-    return () => {
-      cancelAnimationFrame(raf)
-      window.removeEventListener('mousemove', handleMouseMove)
-    }
-  }, [scrollProgress])
+      if (!video.seeking && Math.abs(video.currentTime - current) > SEEK_EPSILON) {
+        video.currentTime = current
+      }
+      // Keep the loop alive while the video is still catching up to the scroll.
+      return Math.abs(delta) > SEEK_EPSILON
+    })
+  }, [])
 
   return (
     <div
@@ -79,3 +77,5 @@ export default function VideoScrubber({ scrollProgress }: VideoScrubberProps) {
     </div>
   )
 }
+
+export default memo(VideoScrubber)

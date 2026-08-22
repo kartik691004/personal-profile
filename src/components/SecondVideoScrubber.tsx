@@ -1,56 +1,70 @@
-import { useEffect, useRef, useState } from 'react'
-import gsap from 'gsap'
-
-interface SecondVideoScrubberProps {
-  scrollProgress: number
-}
+import { memo, useEffect, useRef, useState } from 'react'
+import {
+  clamp01,
+  DRUM_END,
+  DRUM_START,
+  getPointerX,
+  getPointerY,
+  onFrame,
+  SECOND_SCREEN_START,
+} from '../scroll'
 
 const VIDEO_URL =
   'https://pub-86dc5b5484314368ac5436a674b0d919.r2.dev/cloudinarry%20to%20cloudflare/2026060218225-v_kcy5rl.mp4'
-const DRUM_START = 1.45
-const DRUM_END = 3.5
+const FALLBACK_DURATION = 4.2
+const SEEK_LERP = 0.22
+const SEEK_EPSILON = 0.02
+const PARALLAX = 40
+/**
+ * Both videos used to start downloading at once and fight for bandwidth, delaying
+ * the hero — the only one visible on load. This one is fetched on approach, well
+ * before the panel starts rising at 1.15.
+ */
+const PRELOAD_AT = 0.6
 
-export default function SecondVideoScrubber({ scrollProgress }: SecondVideoScrubberProps) {
+function SecondVideoScrubber() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [isLoaded, setIsLoaded] = useState(false)
-  const currentRef = useRef(0)
+  const [src, setSrc] = useState<string | undefined>(undefined)
+  const srcRequestedRef = useRef(false)
 
   useEffect(() => {
-    const video = videoRef.current
     const wrap = wrapRef.current
-    if (!video || !wrap) return
+    if (!wrap) return
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const mx = e.clientX / window.innerWidth - 0.5
-      const my = e.clientY / window.innerHeight - 0.5
-      gsap.to(wrap, { x: -mx * 40, y: -my * 40, duration: 1.2, ease: 'power2.out', overwrite: 'auto' })
-    }
-    window.addEventListener('mousemove', handleMouseMove)
+    let current = 0
+    let lastTransform = ''
 
-    const duration = video.duration || 4.2
-
-    const tick = () => {
-      const drumProgress = Math.min(1, Math.max(0, (scrollProgress - DRUM_START) / (DRUM_END - DRUM_START)))
-      const targetTime = drumProgress * duration
-      currentRef.current += (targetTime - currentRef.current) * 0.15
-      if (!video.seeking && Math.abs(video.currentTime - currentRef.current) > 0.01) {
-        video.currentTime = currentRef.current
+    return onFrame((progress) => {
+      if (!srcRequestedRef.current && progress >= PRELOAD_AT) {
+        srcRequestedRef.current = true
+        setSrc(VIDEO_URL)
       }
-    }
 
-    let raf: number
-    const loop = () => {
-      tick()
-      raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
+      // The panel hasn't started rising yet — nothing here is on screen.
+      if (progress < SECOND_SCREEN_START) return false
 
-    return () => {
-      cancelAnimationFrame(raf)
-      window.removeEventListener('mousemove', handleMouseMove)
-    }
-  }, [scrollProgress])
+      const transform = `translate3d(${(-getPointerX() * PARALLAX).toFixed(2)}px, ${(-getPointerY() * PARALLAX).toFixed(2)}px, 0)`
+      if (transform !== lastTransform) {
+        wrap.style.transform = transform
+        lastTransform = transform
+      }
+
+      const video = videoRef.current
+      if (!video || !video.duration) return false
+
+      const drumProgress = clamp01((progress - DRUM_START) / (DRUM_END - DRUM_START))
+      const targetTime = drumProgress * (video.duration || FALLBACK_DURATION)
+      const delta = targetTime - current
+      current += delta * SEEK_LERP
+
+      if (!video.seeking && Math.abs(video.currentTime - current) > SEEK_EPSILON) {
+        video.currentTime = current
+      }
+      return Math.abs(delta) > SEEK_EPSILON
+    })
+  }, [])
 
   return (
     <div
@@ -60,7 +74,7 @@ export default function SecondVideoScrubber({ scrollProgress }: SecondVideoScrub
     >
       <video
         ref={videoRef}
-        src={VIDEO_URL}
+        src={src}
         playsInline
         muted
         preload="auto"
@@ -81,3 +95,5 @@ export default function SecondVideoScrubber({ scrollProgress }: SecondVideoScrub
     </div>
   )
 }
+
+export default memo(SecondVideoScrubber)

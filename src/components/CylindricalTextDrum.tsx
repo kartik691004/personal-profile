@@ -1,20 +1,91 @@
+import { memo, useEffect, useRef } from 'react'
 import { DRUM_LINES } from '../data'
-
-interface CylindricalTextDrumProps {
-  scrollProgress: number
-}
+import { clamp01, DRUM_END, DRUM_START, onFrame, quantizeBlur, SECOND_SCREEN_START } from '../scroll'
 
 const R = 380
 const LINE_HEIGHT = 32
-const DRUM_START = 1.45
-const DRUM_END = 3.5
+const LAST_INDEX = DRUM_LINES.length - 1
 
-function clamp01(value: number) {
-  return Math.min(1, Math.max(0, value))
-}
+/**
+ * The depth blur used to be a raw fractional value (0.375px, 1.125px, ...) written
+ * to ~31 lines on every frame, which forced the browser to re-rasterise every line
+ * 60x/second. Snapping to 2px steps means a given line changes its blur only a
+ * handful of times across the whole scroll, and anything under 1px is dropped
+ * entirely because it costs a full raster pass while being invisible.
+ */
+const BLUR_STEP = 2
+const MIN_BLUR = 1
 
-export default function CylindricalTextDrum({ scrollProgress }: CylindricalTextDrumProps) {
-  const targetIndex = clamp01((scrollProgress - DRUM_START) / (DRUM_END - DRUM_START)) * (DRUM_LINES.length - 1)
+/**
+ * 32 lines of copy mapped onto a virtual cylinder. Nothing here is React state:
+ * the lines are rendered once and then transformed imperatively, so scrolling the
+ * drum costs zero React renders and zero reconciliation.
+ */
+function CylindricalTextDrum() {
+  const lineRefs = useRef<(HTMLParagraphElement | null)[]>([])
+
+  useEffect(() => {
+    const lines = lineRefs.current
+    // Cache the last value written per line so we never touch the CSSOM for a
+    // property that has not actually changed.
+    const lastTransform = new Array<string>(lines.length).fill('')
+    const lastOpacity = new Array<number>(lines.length).fill(-1)
+    const lastBlur = new Array<number>(lines.length).fill(-1)
+    const lastHidden = new Array<boolean | null>(lines.length).fill(null)
+    // Paint the resting state once, then skip entirely while off-screen.
+    let painted = false
+
+    return onFrame((progress) => {
+      // The dark panel hasn't started rising, so none of this is on screen yet.
+      if (painted && progress < SECOND_SCREEN_START) return false
+      painted = true
+
+      const targetIndex = clamp01((progress - DRUM_START) / (DRUM_END - DRUM_START)) * LAST_INDEX
+
+      for (let i = 0; i < lines.length; i++) {
+        const el = lines[i]
+        if (!el) continue
+
+        const indexDiff = i - targetIndex
+        const translateY = indexDiff * LINE_HEIGHT
+        const angleRad = translateY / R
+        const cos = Math.cos(angleRad)
+        const opacity = cos <= 0.2 ? 0 : (cos - 0.2) / 0.8
+
+        // Fully transparent lines are pulled out of the render path so the browser
+        // stops rasterising and compositing them at all.
+        const hidden = opacity <= 0
+        if (hidden !== lastHidden[i]) {
+          el.style.visibility = hidden ? 'hidden' : 'visible'
+          lastHidden[i] = hidden
+        }
+        if (hidden) continue
+
+        const angleDeg = (angleRad * 180) / Math.PI
+        const translateZ = cos * R - R
+        const baseScale = 0.78 + cos * 0.22
+
+        const transform = `translateY(${translateY.toFixed(2)}px) translateZ(${translateZ.toFixed(2)}px) rotateX(${(-angleDeg * 0.8).toFixed(2)}deg) scale(${baseScale.toFixed(4)})`
+        if (transform !== lastTransform[i]) {
+          el.style.transform = transform
+          lastTransform[i] = transform
+        }
+
+        const roundedOpacity = Math.round(opacity * 100) / 100
+        if (roundedOpacity !== lastOpacity[i]) {
+          el.style.opacity = String(roundedOpacity)
+          lastOpacity[i] = roundedOpacity
+        }
+
+        const rawBlur = Math.min(8, Math.max(0, (Math.abs(indexDiff) - 1.5) * 0.75))
+        const blur = rawBlur < MIN_BLUR ? 0 : quantizeBlur(rawBlur, BLUR_STEP)
+        if (blur !== lastBlur[i]) {
+          el.style.filter = blur > 0 ? `blur(${blur}px)` : ''
+          lastBlur[i] = blur
+        }
+      }
+    })
+  }, [])
 
   return (
     <div
@@ -26,30 +97,17 @@ export default function CylindricalTextDrum({ scrollProgress }: CylindricalTextD
         style={{ transformStyle: 'preserve-3d' }}
       >
         {DRUM_LINES.map((line, idx) => {
-          const indexDiff = idx - targetIndex
-          const translateY = indexDiff * LINE_HEIGHT
-          const angleRad = translateY / R
-          const angleDeg = (angleRad * 180) / Math.PI
-          const translateZ = Math.cos(angleRad) * R - R
-          const baseScale = 0.78 + Math.cos(angleRad) * 0.22
-          const opacity = Math.max(0, (Math.cos(angleRad) - 0.2) / 0.8)
-          const depthBlur = Math.min(8, Math.max(0, (Math.abs(indexDiff) - 1.5) * 0.75))
           const isEmpty = line.segments.length === 1 && line.segments[0].text === ''
-
           return (
             <p
               key={idx}
-              className="font-manrope text-[18px] sm:text-[24px] md:text-[28px] lg:text-[32px] font-semibold leading-[0.90] tracking-tight whitespace-nowrap"
-              style={{
-                transform: `translateY(${translateY}px) translateZ(${translateZ}px) rotateX(${-angleDeg * 0.8}deg) scale(${baseScale})`,
-                transformOrigin: 'left center',
-                opacity,
-                letterSpacing: '-0.035em',
-                filter: depthBlur > 0.1 ? `blur(${depthBlur}px)` : undefined,
+              ref={(el) => {
+                lineRefs.current[idx] = el
               }}
+              className="font-manrope text-[18px] sm:text-[24px] md:text-[28px] lg:text-[32px] font-semibold leading-[0.90] tracking-[-0.035em] whitespace-nowrap origin-left"
             >
               {isEmpty ? (
-                <span style={{ opacity: opacity * 0.3 }}>&nbsp;&nbsp;&nbsp;&nbsp;</span>
+                <span className="opacity-30">&nbsp;&nbsp;&nbsp;&nbsp;</span>
               ) : (
                 line.segments.map((segment, j) => (
                   <span
@@ -67,3 +125,5 @@ export default function CylindricalTextDrum({ scrollProgress }: CylindricalTextD
     </div>
   )
 }
+
+export default memo(CylindricalTextDrum)
